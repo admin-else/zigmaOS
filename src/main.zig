@@ -1,23 +1,13 @@
 const text = @import("textout.zig");
-const multiboot_header = @cImport({
+const multiboot = @cImport({
     @cInclude("multiboot.h");
 });
 
-const ALIGN = 1 << 0;
-const MEMINFO = 1 << 1;
-const MAGIC = 0x1BADB002;
-const FLAGS = ALIGN | MEMINFO;
-
-const MultibootHeader = packed struct {
-    magic: i32 = MAGIC,
-    flags: i32,
-    checksum: i32,
-    padding: u32 = 0,
-};
-
-export var multiboot: MultibootHeader align(4) linksection(".multiboot") = .{
+const FLAGS = multiboot.MULTIBOOT_PAGE_ALIGN | multiboot.MULTIBOOT_MEMORY_INFO;
+export var multibootHeader: multiboot.multiboot_header align(4) linksection(".multiboot") = .{
+    .magic = multiboot.MULTIBOOT_HEADER_MAGIC,
     .flags = FLAGS,
-    .checksum = -(MAGIC + FLAGS),
+    .checksum = @bitCast(-(multiboot.MULTIBOOT_HEADER_MAGIC + FLAGS)),
 };
 
 var stack_bytes: [16 * 1024]u8 align(16) linksection(".bss") = undefined;
@@ -31,6 +21,10 @@ export fn _start() callconv(.Naked) noreturn {
     asm volatile (
         \\ movl %[stack_top], %%esp
         \\ movl %%esp, %%ebp
+        \\ movl %%eax, %%edi  // save multiboot magic to EDI
+        \\ movl %%ebx, %%esi  // save multiboot info pointer to ESI
+        \\ push %%esi         // 2nd arg
+        \\ push %%edi         // 1st arg
         \\ call %[kmain:P]
         :
         // The stack grows downwards on x86, so we need to point ESP
@@ -59,19 +53,11 @@ export fn _start() callconv(.Naked) noreturn {
     );
 }
 
-fn kmain() callconv(.C) void {
-    var info: *multiboot_header.multiboot_info = undefined;
-
-    asm volatile (
-        \\ movl %%ebx, %[res]
-        : [res] "=r" (info),
-        :
-        : "ebx"
-    );
-
+fn kmain(multibootMagic: u32, multibootInfo: *multiboot.multiboot_info) callconv(.C) void {
+    if (multibootMagic != 0x2BADB002) return;
     text.setColor(.{ .bg = .BLACK, .fg = .RED });
     text.puts("newline test\n");
     text.puts("newline test\n");
-    text.printf("printf test {x}", .{info.cmdline});
+    text.printf("printf test {}", .{multibootInfo});
     asm volatile ("hlt");
 }
